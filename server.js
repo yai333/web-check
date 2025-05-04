@@ -1,4 +1,3 @@
-
 import fs from 'fs';
 import path from 'path';
 import cors from 'cors';
@@ -6,7 +5,8 @@ import dotenv from 'dotenv';
 import express from 'express';
 import rateLimit from 'express-rate-limit';
 import historyApiFallback from 'connect-history-api-fallback';
-
+import swaggerJsdoc from 'swagger-jsdoc';
+import swaggerUi from 'swagger-ui-express';
 // Load environment variables from .env file
 dotenv.config();
 
@@ -24,10 +24,46 @@ const placeholderFilePath = path.join(__dirname, 'public', 'placeholder.html');
 const handlers = {}; // Will store list of API endpoints
 process.env.WC_SERVER = 'true'; // Tells middleware to return in non-lambda mode
 
+//swagger
+// 1) Define the base OpenAPI info & where to look for JSDoc
+const swaggerOptions = {
+  definition: {
+    openapi: '3.0.3',
+    info: {
+      title: 'Web-Check API',
+      version: '1.0.0',
+      description:
+        'Comprehensive API documentation for your Web-Check endpoints.',
+    },
+    servers: [{ url: `http://localhost:${process.env.PORT || 3000}` }],
+  },
+  apis: [path.join(__dirname, './api/docs/swagger.js')], // 👈 only this file now
+};
+
+// 2) Generate the spec
+const swaggerSpec = swaggerJsdoc(swaggerOptions);
+
+// 3) Serve swagger.json at `/swagger.json`
+app.get('/swagger.json', (req, res) => {
+  // Dynamically set the server based on the incoming request
+  swaggerSpec.servers = [
+    {
+      url: `${req.protocol}://${req.get('host')}`,
+    },
+  ];
+  res.setHeader('Content-Type', 'application/json');
+  res.send(swaggerSpec);
+});
+
+// 4) Serve Swagger-UI at `/docs`
+app.use('/docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
+
 // Enable CORS
-app.use(cors({
-  origin: process.env.API_CORS_ORIGIN || '*',
-}));
+app.use(
+  cors({
+    origin: process.env.API_CORS_ORIGIN || '*',
+  })
+);
 
 // Define max requests within each time frame
 const limits = [
@@ -38,19 +74,22 @@ const limits = [
 
 // Construct a message to be returned if the user has been rate-limited
 const makeLimiterResponseMsg = (retryAfter) => {
-  const why = 'This keeps the service running smoothly for everyone. '
-  + 'You can get around these limits by running your own instance of Web Check.';
+  const why =
+    'This keeps the service running smoothly for everyone. ' +
+    'You can get around these limits by running your own instance of Web Check.';
   return `You've been rate-limited, please try again in ${retryAfter} seconds.\n${why}`;
 };
 
 // Create rate limiters for each time frame
-const limiters = limits.map(limit => rateLimit({
-  windowMs: limit.timeFrame * 1000,
-  max: limit.max,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { error: makeLimiterResponseMsg(limit.messageTime) }
-}));
+const limiters = limits.map((limit) =>
+  rateLimit({
+    windowMs: limit.timeFrame * 1000,
+    max: limit.max,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: makeLimiterResponseMsg(limit.messageTime) },
+  })
+);
 
 // If rate-limiting enabled, then apply the limiters to the /api endpoint
 if (process.env.API_ENABLE_RATE_LIMIT === 'true') {
@@ -59,8 +98,8 @@ if (process.env.API_ENABLE_RATE_LIMIT === 'true') {
 
 // Read and register each API function as an Express routes
 fs.readdirSync(dirPath, { withFileTypes: true })
-  .filter(dirent => dirent.isFile() && dirent.name.endsWith('.js'))
-  .forEach(async dirent => {
+  .filter((dirent) => dirent.isFile() && dirent.name.endsWith('.js'))
+  .forEach(async (dirent) => {
     const routeName = dirent.name.split('.')[0];
     const route = `${API_DIR}/${routeName}`;
     // const handler = require(path.join(dirPath, dirent.name));
@@ -80,17 +119,27 @@ fs.readdirSync(dirPath, { withFileTypes: true })
 
 const renderPlaceholderPage = async (res, msgId, logs) => {
   const errorMessages = {
-    notCompiled: 'Looks like the GUI app has not yet been compiled.<br />'
-    + 'Run <code>yarn build</code> to continue, then restart the server.',
-    notCompiledSsrHandler: 'Server-side rendering failed to initiate, as SSR handler not found.<br />'
-    + 'This can be fixed by running <code>yarn build</code>, then restarting the server.<br />',
-    disabledGui:  'Web-Check API is up and running!<br />Access the endpoints at '
-    + `<a href="${API_DIR}"><code>${API_DIR}</code></a>`,
+    notCompiled:
+      'Looks like the GUI app has not yet been compiled.<br />' +
+      'Run <code>yarn build</code> to continue, then restart the server.',
+    notCompiledSsrHandler:
+      'Server-side rendering failed to initiate, as SSR handler not found.<br />' +
+      'This can be fixed by running <code>yarn build</code>, then restarting the server.<br />',
+    disabledGui:
+      'Web-Check API is up and running!<br />Access the endpoints at ' +
+      `<a href="${API_DIR}"><code>${API_DIR}</code></a>`,
   };
   const logOutput = logs ? `<div class="logs"><code>${logs}</code></div>` : '';
-  const errorMessage = (errorMessages[msgId] || 'An mystery error occurred.') + logOutput;
-  const placeholderContent = await fs.promises.readFile(placeholderFilePath, 'utf-8');
-  const htmlContent = placeholderContent.replace('<!-- CONTENT -->', errorMessage );
+  const errorMessage =
+    (errorMessages[msgId] || 'An mystery error occurred.') + logOutput;
+  const placeholderContent = await fs.promises.readFile(
+    placeholderFilePath,
+    'utf-8'
+  );
+  const htmlContent = placeholderContent.replace(
+    '<!-- CONTENT -->',
+    errorMessage
+  );
   res.status(500).send(htmlContent);
 };
 
@@ -117,26 +166,32 @@ app.get(API_DIR, async (req, res) => {
   const timeout = (ms, jobName = null) => {
     return new Promise((_, reject) => {
       setTimeout(() => {
-        reject(new Error(
-          `Timed out after ${ms/1000} seconds${jobName ? `, when executing ${jobName}` : ''}`
-        ));
+        reject(
+          new Error(
+            `Timed out after ${ms / 1000} seconds${
+              jobName ? `, when executing ${jobName}` : ''
+            }`
+          )
+        );
       }, ms);
     });
   };
 
-  const handlerPromises = Object.entries(handlers).map(async ([route, handler]) => {
-    const routeName = route.replace(`${API_DIR}/`, '');
+  const handlerPromises = Object.entries(handlers).map(
+    async ([route, handler]) => {
+      const routeName = route.replace(`${API_DIR}/`, '');
 
-    try {
-      const result = await Promise.race([
-        executeHandler(handler, req, res),
-        timeout(maxExecutionTime, routeName)
-      ]);
-      results[routeName] = result.body;
-    } catch (err) {
-      results[routeName] = { error: err.message };
+      try {
+        const result = await Promise.race([
+          executeHandler(handler, req, res),
+          timeout(maxExecutionTime, routeName),
+        ]);
+        results[routeName] = result.body;
+      } catch (err) {
+        results[routeName] = { error: err.message };
+      }
     }
-  });
+  );
 
   await Promise.all(handlerPromises);
   res.json(results);
@@ -144,7 +199,11 @@ app.get(API_DIR, async (req, res) => {
 
 // Skip the marketing homepage, for self-hosted users
 app.use((req, res, next) => {
-  if (req.path === '/' && process.env.BOSS_SERVER !== 'true' && !process.env.DISABLE_GUI) {
+  if (
+    req.path === '/' &&
+    process.env.BOSS_SERVER !== 'true' &&
+    !process.env.DISABLE_GUI
+  ) {
     req.url = '/check';
   }
   next();
@@ -159,25 +218,33 @@ if (process.env.DISABLE_GUI && process.env.DISABLE_GUI !== 'false') {
   app.get('/', async (req, res) => {
     renderPlaceholderPage(res, 'notCompiled');
   });
-} else { // GUI enabled, and build files present, let's go!!
+} else {
+  // GUI enabled, and build files present, let's go!!
   app.use(express.static('dist/client/'));
   app.use(async (req, res, next) => {
     const ssrHandlerPath = path.join(__dirname, 'dist', 'server', 'entry.mjs');
-    import(ssrHandlerPath).then(({ handler: ssrHandler }) => {
-      ssrHandler(req, res, next);
-    }).catch(async err => {
-      renderPlaceholderPage(res, 'notCompiledSsrHandler', err.message);
-    });
-  });  
+    import(ssrHandlerPath)
+      .then(({ handler: ssrHandler }) => {
+        ssrHandler(req, res, next);
+      })
+      .catch(async (err) => {
+        renderPlaceholderPage(res, 'notCompiledSsrHandler', err.message);
+      });
+  });
 }
 
 // Handle SPA routing
-app.use(historyApiFallback({
-  rewrites: [
-    { from: new RegExp(`^${API_DIR}/.*$`), to: (context) => context.parsedUrl.path },
-    { from: /^.*$/, to: '/index.html' }
-  ]
-}));
+app.use(
+  historyApiFallback({
+    rewrites: [
+      {
+        from: new RegExp(`^${API_DIR}/.*$`),
+        to: (context) => context.parsedUrl.path,
+      },
+      { from: /^.*$/, to: '/index.html' },
+    ],
+  })
+);
 
 // Anything left unhandled (which isn't an API endpoint), return a 404
 app.use((req, res, next) => {
@@ -192,21 +259,30 @@ app.use((req, res, next) => {
 const printMessage = () => {
   console.log(
     `\x1b[36m\n` +
-    '    __      __   _         ___ _           _   \n' +
-    '    \\ \\    / /__| |__ ___ / __| |_  ___ __| |__\n' +
-    '     \\ \\/\\/ / -_) \'_ \\___| (__| \' \\/ -_) _| / /\n' +
-    '      \\_/\\_/\\___|_.__/    \\___|_||_\\___\\__|_\\_\\\n' +
-    `\x1b[0m\n`,
+      '    __      __   _         ___ _           _   \n' +
+      '    \\ \\    / /__| |__ ___ / __| |_  ___ __| |__\n' +
+      "     \\ \\/\\/ / -_) '_ \\___| (__| ' \\/ -_) _| / /\n" +
+      '      \\_/\\_/\\___|_.__/    \\___|_||_\\___\\__|_\\_\\\n' +
+      `\x1b[0m\n`,
     `\x1b[1m\x1b[32m🚀 Web-Check is up and running at http://localhost:${port} \x1b[0m\n\n`,
     `\x1b[2m\x1b[36m🛟 For documentation and support, visit the GitHub repo: ` +
-    `https://github.com/lissy93/web-check \n`,
+      `https://github.com/lissy93/web-check \n`,
     `💖 Found Web-Check useful? Consider sponsoring us on GitHub ` +
-    `to help fund maintenance & development.\x1b[0m`
+      `to help fund maintenance & development.\x1b[0m`
   );
 };
 
 // Create server
-app.listen(port, () => {
-  printMessage();
-});
+// app.listen(port, () => {
+//   printMessage();
+// });
+if (
+  process.env.WC_SERVER === 'true' &&
+  process.env.FUNCTION_TARGET !== 'webCheckAPI'
+) {
+  app.listen(port, () => {
+    printMessage();
+  });
+}
 
+export default app;

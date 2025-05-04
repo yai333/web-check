@@ -60,3 +60,5 @@ Thumbs.db
 *.swp
 *.swo
 
+.cache/
+api/README.md

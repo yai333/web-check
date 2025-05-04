@@ -2,7 +2,10 @@
   "name": "web-check",
   "type": "module",
   "version": "2.0.1",
-  "homepage": "https://web-check.xyz",
+  "main": "index.js",
+  "engines": {
+    "node": "22.x"
+  },
   "scripts": {
     "start": "node server",
     "start-pm": "pm2 start server.js -i max",
@@ -11,7 +14,8 @@
     "dev:netlify": "PLATFORM='netlify' npx netlify dev",
     "dev:api": "DISABLE_GUI='true' PORT='3001' nodemon server",
     "dev:astro": "PUBLIC_API_ENDPOINT=http://localhost:3001/api astro dev",
-    "dev": "concurrently -c magenta,cyan -n backend,frontend 'yarn dev:api' 'yarn dev:astro'"
+    "dev": "concurrently -c magenta,cyan -n backend,frontend 'yarn dev:api' 'yarn dev:astro'",
+    "gcp-build": "node node_modules/puppeteer/install.mjs && echo \"--- Listing Puppeteer Cache Root ---\" && ls -l --color=never /workspace/.cache/puppeteer/ && echo \"--- Listing Puppeteer Chrome Downloads ---\" && ls -l --color=never /workspace/.cache/puppeteer/chrome/ && echo \"--- Listing Specific Chrome Revision Directory (using wildcard) ---\" && ls -l --color=never /workspace/.cache/puppeteer/chrome/linux-*/ && echo \"--- Listing Executable Directory (using wildcard) ---\" && ls -l --color=never /workspace/.cache/puppeteer/chrome/linux-*/chrome-linux64/"
   },
   "dependencies": {
     "@astrojs/check": "^0.5.10",
@@ -50,6 +54,8 @@
     "react-toastify": "^10.0.5",
     "recharts": "^2.12.6",
     "svelte": "^4.2.17",
+    "swagger-jsdoc": "^6.2.8",
+    "swagger-ui-express": "^5.0.1",
     "traceroute": "^1.0.0",
     "typescript": "^5.4.5",
     "unzipper": "^0.11.5",

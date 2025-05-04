@@ -1,82 +1,92 @@
-import dns from 'dns';
-import URL from 'url-parse';
-import middleware from './_common/middleware.js';
-
-// TODO: Fix.
+import { promises as dns } from 'dns'; // Promise‐based DNS API
+import URL from 'url-parse'; // For parsing the incoming URL
+import middleware from './_common/middleware.js'; // Your existing middleware wrapper
 
 const mailConfigHandler = async (url, event, context) => {
-  try {
-    const domain = new URL(url).hostname || new URL(url).pathname;
+  // Parse out the hostname (or fallback to pathname)
+  const parsed = new URL(url);
+  const domain = parsed.hostname || parsed.pathname;
 
-    // Get MX records
+  try {
+    // 1. Look up MX records for the domain
     const mxRecords = await dns.resolveMx(domain);
 
-    // Get TXT records
-    const txtRecords = await dns.resolveTxt(domain);
+    // 2. Look up all TXT records
+    const txtRecordsRaw = await dns.resolveTxt(domain);
 
-    // Filter for only email related TXT records (SPF, DKIM, DMARC, and certain provider verifications)
-    const emailTxtRecords = txtRecords.filter(record => {
-      const recordString = record.join('');
+    // 3. Filter TXT for email-related entries
+    const emailTxtRecords = txtRecordsRaw.filter((record) => {
+      const str = record.join('');
       return (
-        recordString.startsWith('v=spf1') ||
-        recordString.startsWith('v=DKIM1') ||
-        recordString.startsWith('v=DMARC1') ||
-        recordString.startsWith('protonmail-verification=') ||
-        recordString.startsWith('google-site-verification=') || // Google Workspace
-        recordString.startsWith('MS=') || // Microsoft 365
-        recordString.startsWith('zoho-verification=') || // Zoho
-        recordString.startsWith('titan-verification=') || // Titan
-        recordString.includes('bluehost.com') // BlueHost
+        str.startsWith('v=spf1') ||
+        str.startsWith('v=DKIM1') ||
+        str.startsWith('v=DMARC1') ||
+        str.startsWith('protonmail-verification=') ||
+        str.startsWith('google-site-verification=') || // Google Workspace
+        str.startsWith('MS=') || // Microsoft 365
+        str.startsWith('zoho-verification=') ||
+        str.startsWith('titan-verification=') ||
+        str.includes('bluehost.com')
       );
     });
 
-    // Identify specific mail services
-    const mailServices = emailTxtRecords.map(record => {
-      const recordString = record.join('');
-      if (recordString.startsWith('protonmail-verification=')) {
-        return { provider: 'ProtonMail', value: recordString.split('=')[1] };
-      } else if (recordString.startsWith('google-site-verification=')) {
-        return { provider: 'Google Workspace', value: recordString.split('=')[1] };
-      } else if (recordString.startsWith('MS=')) {
-        return { provider: 'Microsoft 365', value: recordString.split('=')[1] };
-      } else if (recordString.startsWith('zoho-verification=')) {
-        return { provider: 'Zoho', value: recordString.split('=')[1] };
-      } else if (recordString.startsWith('titan-verification=')) {
-        return { provider: 'Titan', value: recordString.split('=')[1] };
-      } else if (recordString.includes('bluehost.com')) {
-        return { provider: 'BlueHost', value: recordString };
-      } else {
+    // 4. Map specific providers from TXT records
+    const mailServices = emailTxtRecords
+      .map((rec) => {
+        const s = rec.join('');
+        if (s.startsWith('protonmail-verification=')) {
+          return { provider: 'ProtonMail', value: s.split('=')[1] };
+        }
+        if (s.startsWith('google-site-verification=')) {
+          return { provider: 'Google Workspace', value: s.split('=')[1] };
+        }
+        if (s.startsWith('MS=')) {
+          return { provider: 'Microsoft 365', value: s.split('=')[1] };
+        }
+        if (s.startsWith('zoho-verification=')) {
+          return { provider: 'Zoho', value: s.split('=')[1] };
+        }
+        if (s.startsWith('titan-verification=')) {
+          return { provider: 'Titan', value: s.split('=')[1] };
+        }
+        if (s.includes('bluehost.com')) {
+          return { provider: 'BlueHost', value: s };
+        }
         return null;
-      }
-    }).filter(record => record !== null);
+      })
+      .filter((x) => x !== null);
 
-    // Check MX records for Yahoo
-    const yahooMx = mxRecords.filter(record => record.exchange.includes('yahoodns.net'));
-    if (yahooMx.length > 0) {
-      mailServices.push({ provider: 'Yahoo', value: yahooMx[0].exchange });
-    }
-    // Check MX records for Mimecast
-    const mimecastMx = mxRecords.filter(record => record.exchange.includes('mimecast.com'));
-    if (mimecastMx.length > 0) {
-      mailServices.push({ provider: 'Mimecast', value: mimecastMx[0].exchange });
-    }
+    // 5. Detect Yahoo via MX
+    const yahooMx = mxRecords.find((r) => r.exchange.includes('yahoodns.net'));
+    if (yahooMx)
+      mailServices.push({ provider: 'Yahoo', value: yahooMx.exchange });
 
+    // 6. Detect Mimecast via MX
+    const mimecastMx = mxRecords.find((r) =>
+      r.exchange.includes('mimecast.com')
+    );
+    if (mimecastMx)
+      mailServices.push({ provider: 'Mimecast', value: mimecastMx.exchange });
+
+    // 7. Return the combined result
     return {
-        mxRecords,
-        txtRecords: emailTxtRecords,
-        mailServices,
-      };
+      mxRecords,
+      txtRecords: emailTxtRecords,
+      mailServices,
+    };
   } catch (error) {
+    // Handle domains without mail servers
     if (error.code === 'ENOTFOUND' || error.code === 'ENODATA') {
       return { skipped: 'No mail server in use on this domain' };
-    } else {
-      return {
-        statusCode: 500,
-        body: { error: error.message },
-      };
     }
+    // Other errors
+    return {
+      statusCode: 500,
+      body: { error: error.message },
+    };
   }
 };
 
+// Wrap and export with your middleware
 export const handler = middleware(mailConfigHandler);
 export default handler;
